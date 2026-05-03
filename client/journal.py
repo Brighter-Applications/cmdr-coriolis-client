@@ -14,6 +14,8 @@ import os
 import sys
 import time
 
+from client.api import TRACKED_EVENTS
+
 
 # ---------------------------------------------------------------------------
 # Default journal directory detection
@@ -114,15 +116,52 @@ def extract_cmdr_name(journal_path: str) -> str:
 # Journal tail / monitoring
 # ---------------------------------------------------------------------------
 
+def _find_last_tracked_event(journal_path: str) -> tuple:
+    """Scan the journal file and return (last_tracked_event_dict, file_position_after_it).
+
+    Returns (None, end_of_file_position) if no tracked events are found.
+    """
+    last_event = None
+    last_event_end_pos = 0
+
+    try:
+        with open(journal_path, "r", encoding="utf-8") as fh:
+            while True:
+                pos_before = fh.tell()
+                line = fh.readline()
+                if not line:
+                    break
+                pos_after = fh.tell()
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("event", "") in TRACKED_EVENTS:
+                    last_event = event
+                    last_event_end_pos = pos_after
+
+            # If no tracked event found, return end of file
+            if last_event is None:
+                last_event_end_pos = fh.tell()
+
+    except OSError:
+        pass
+
+    return last_event, last_event_end_pos
+
+
 class JournalTailer:
-    """Incrementally read new lines from a journal file.
+    """Incrementally read events from a journal file.
 
-    On start, reads the entire current file from the beginning (to catch
-    startup events like Commander, Materials, Loadout), then tails for
-    new lines.
+    On start, scans the existing file to find the last tracked event,
+    yields just that one (to establish current state), then tails for
+    all new tracked events going forward.
 
-    Also watches for new journal files being created in the same directory
-    (indicating a new game session) and switches to them automatically.
+    Also watches for new journal files (new game session) and switches
+    to them automatically.
     """
 
     def __init__(self, journal_path: str, poll_interval: float = 1.0) -> None:
@@ -138,12 +177,25 @@ class JournalTailer:
     def read_new_events(self):
         """Generator that yields parsed journal event dicts.
 
-        Reads the current file from the beginning, then tails for new lines.
-        Periodically checks for newer journal files and switches to them.
+        First yields the last tracked event from the existing file (catchup),
+        then tails for new lines. Switches to newer journal files automatically.
         """
         self._running = True
+        is_first_file = True
 
         while self._running:
+            if is_first_file:
+                # For the initial file, find the last tracked event and
+                # start tailing from after it
+                last_event, tail_from_pos = _find_last_tracked_event(self.journal_path)
+                if last_event:
+                    yield last_event
+                is_first_file = False
+            else:
+                # For subsequent files (new game session), start from the beginning
+                tail_from_pos = 0
+
+            # Now tail from the determined position
             try:
                 fh = open(self.journal_path, "r", encoding="utf-8")
             except OSError:
@@ -151,7 +203,8 @@ class JournalTailer:
                 continue
 
             with fh:
-                # Read from the beginning to catch startup events
+                fh.seek(tail_from_pos)
+
                 while self._running:
                     line = fh.readline()
                     if line:
@@ -167,6 +220,6 @@ class JournalTailer:
                         newer = find_latest_journal(self.journal_dir)
                         if newer and newer != self.journal_path:
                             self.journal_path = newer
-                            break  # break inner loop to open the new file
+                            break  # break to open the new file
 
                         time.sleep(self.poll_interval)
