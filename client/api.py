@@ -16,8 +16,8 @@ REQUEST_TIMEOUT = 15
 # Events the Journal API actually processes — no point sending anything else
 TRACKED_EVENTS = {
     'Commander', 'EngineerCraft', 'LoadGame', 'Loadout',
-    'MaterialCollected', 'ShipyardSwap', 'StoredShips',
-    'StoredModules', 'Materials',
+    'MaterialCollected', 'MaterialTrade', 'ShipyardSwap',
+    'StoredShips', 'StoredModules', 'Materials',
 }
 
 
