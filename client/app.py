@@ -249,7 +249,13 @@ class App(tk.Tk):
             except api.ApiError as exc:
                 self._msg_queue.put(("log", f"  → API error: {exc}"))
             except requests.RequestException as exc:
-                self._msg_queue.put(("log", f"  → Network error: {exc}"))
+                msg = str(exc)
+                if 'PermissionError' in msg or 'Permission denied' in msg:
+                    self._msg_queue.put(("log", f"  → Connection blocked (firewall/antivirus). Allow this app through Windows Firewall."))
+                else:
+                    self._msg_queue.put(("log", f"  → Network error: {exc}"))
+            except Exception as exc:
+                self._msg_queue.put(("log", f"  → Unexpected error: {type(exc).__name__}: {exc}"))
 
         self._msg_queue.put(("status", STATUS_IDLE))
 
