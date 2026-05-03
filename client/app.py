@@ -28,6 +28,25 @@ LOG_MAX_LINES = 500
 STATUS_IDLE = "Idle"
 STATUS_MONITORING = "Monitoring…"
 
+_THEMES = {
+    "dark": {
+        "bg": "#1a1a2e",
+        "fg": "#ffffff",
+        "accent": "#e94d1a",
+        "btn_bg": "#2a2a4a",
+        "entry_bg": "#2a2a4a",
+        "log_bg": "#1a1a2e",
+    },
+    "light": {
+        "bg": "#f0f0f0",
+        "fg": "#1a1a1a",
+        "accent": "#c43e10",
+        "btn_bg": "#d9d9d9",
+        "entry_bg": "#ffffff",
+        "log_bg": "#ffffff",
+    },
+}
+
 
 class App(tk.Tk):
     """Main application window."""
@@ -42,16 +61,63 @@ class App(tk.Tk):
         self._tailer: journal.JournalTailer | None = None
         self._msg_queue: queue.Queue = queue.Queue()
         self._cmdr_name: str = ""
+        self._theme_name = "dark"
 
         self._build_ui()
+        self._apply_theme()
         self._load_saved_settings()
         self._auto_detect_journal()
 
         self.after(200, self._process_queue)
 
+    # ---- Theme --------------------------------------------------------------
+
+    @property
+    def _t(self):
+        return _THEMES[self._theme_name]
+
+    def _toggle_theme(self) -> None:
+        self._theme_name = "light" if self._theme_name == "dark" else "dark"
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        t = self._t
+        self.configure(bg=t["bg"])
+        self._theme_btn.config(
+            text="Light Mode" if self._theme_name == "dark" else "Dark Mode",
+            bg=t["btn_bg"], fg=t["fg"],
+            activebackground=t["accent"], activeforeground=t["bg"],
+        )
+        for w in self._labels:
+            w.config(bg=t["bg"], fg=t["fg"])
+        for w in self._accent_labels:
+            w.config(bg=t["bg"], fg=t["accent"])
+        for w in self._frames:
+            w.config(bg=t["bg"], fg=t["accent"])
+        for w in self._plain_frames:
+            w.config(bg=t["bg"])
+        for w in self._entries:
+            w.config(bg=t["entry_bg"], fg=t["fg"], insertbackground=t["fg"])
+        for w in self._buttons:
+            w.config(bg=t["btn_bg"], fg=t["fg"],
+                     activebackground=t["accent"], activeforeground=t["bg"])
+        for w in self._checkbuttons:
+            w.config(bg=t["bg"], fg=t["fg"], selectcolor=t["entry_bg"],
+                     activebackground=t["bg"], activeforeground=t["fg"])
+        self._log_text.config(bg=t["log_bg"], fg=t["accent"], insertbackground=t["fg"])
+
     # ---- UI construction ----------------------------------------------------
 
     def _build_ui(self) -> None:
+        # Widget tracking lists for theme switching
+        self._labels = []
+        self._accent_labels = []
+        self._frames = []
+        self._plain_frames = []
+        self._entries = []
+        self._buttons = []
+        self._checkbuttons = []
+
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
 
@@ -61,15 +127,25 @@ class App(tk.Tk):
         api_frame = tk.LabelFrame(self, text="API Key", padx=PAD, pady=PAD)
         api_frame.grid(row=row, column=0, sticky="ew", padx=PAD, pady=(PAD, 0))
         api_frame.columnconfigure(1, weight=1)
+        self._frames.append(api_frame)
 
-        tk.Label(api_frame, text="Key:").grid(row=0, column=0, sticky="w")
+        lbl = tk.Label(api_frame, text="Key:")
+        lbl.grid(row=0, column=0, sticky="w")
+        self._labels.append(lbl)
+
         self._api_key_var = tk.StringVar()
         self._api_key_entry = tk.Entry(api_frame, textvariable=self._api_key_var, show="*", width=ENTRY_WIDTH)
         self._api_key_entry.grid(row=0, column=1, sticky="ew", padx=(PAD, 0))
+        self._entries.append(self._api_key_entry)
 
         self._show_key_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(api_frame, text="Show", variable=self._show_key_var, command=self._toggle_key_visibility).grid(row=0, column=2, padx=(4, 0))
-        tk.Button(api_frame, text="Save Key", command=self._save_api_key).grid(row=0, column=3, padx=(PAD, 0))
+        cb = tk.Checkbutton(api_frame, text="Show", variable=self._show_key_var, command=self._toggle_key_visibility)
+        cb.grid(row=0, column=2, padx=(4, 0))
+        self._checkbuttons.append(cb)
+
+        btn = tk.Button(api_frame, text="Save Key", command=self._save_api_key, relief="flat", cursor="hand2")
+        btn.grid(row=0, column=3, padx=(PAD, 0))
+        self._buttons.append(btn)
 
         row += 1
 
@@ -77,12 +153,24 @@ class App(tk.Tk):
         path_frame = tk.LabelFrame(self, text="Journal Directory", padx=PAD, pady=PAD)
         path_frame.grid(row=row, column=0, sticky="ew", padx=PAD, pady=(PAD, 0))
         path_frame.columnconfigure(1, weight=1)
+        self._frames.append(path_frame)
 
-        tk.Label(path_frame, text="Path:").grid(row=0, column=0, sticky="w")
+        lbl = tk.Label(path_frame, text="Path:")
+        lbl.grid(row=0, column=0, sticky="w")
+        self._labels.append(lbl)
+
         self._journal_path_var = tk.StringVar()
-        tk.Entry(path_frame, textvariable=self._journal_path_var, width=ENTRY_WIDTH).grid(row=0, column=1, sticky="ew", padx=(PAD, 0))
-        tk.Button(path_frame, text="Browse…", command=self._browse_journal_dir).grid(row=0, column=2, padx=(PAD, 0))
-        tk.Button(path_frame, text="Apply", command=self._apply_journal_path).grid(row=0, column=3, padx=(4, 0))
+        ent = tk.Entry(path_frame, textvariable=self._journal_path_var, width=ENTRY_WIDTH)
+        ent.grid(row=0, column=1, sticky="ew", padx=(PAD, 0))
+        self._entries.append(ent)
+
+        btn = tk.Button(path_frame, text="Browse…", command=self._browse_journal_dir, relief="flat", cursor="hand2")
+        btn.grid(row=0, column=2, padx=(PAD, 0))
+        self._buttons.append(btn)
+
+        btn = tk.Button(path_frame, text="Apply", command=self._apply_journal_path, relief="flat", cursor="hand2")
+        btn.grid(row=0, column=3, padx=(4, 0))
+        self._buttons.append(btn)
 
         row += 1
 
@@ -90,22 +178,37 @@ class App(tk.Tk):
         cmdr_frame = tk.LabelFrame(self, text="Commander", padx=PAD, pady=PAD)
         cmdr_frame.grid(row=row, column=0, sticky="ew", padx=PAD, pady=(PAD, 0))
         cmdr_frame.columnconfigure(1, weight=1)
+        self._frames.append(cmdr_frame)
 
-        tk.Label(cmdr_frame, text="CMDR:").grid(row=0, column=0, sticky="w")
+        lbl = tk.Label(cmdr_frame, text="CMDR:")
+        lbl.grid(row=0, column=0, sticky="w")
+        self._labels.append(lbl)
+
         self._cmdr_name_var = tk.StringVar(value="(not yet read)")
-        tk.Label(cmdr_frame, textvariable=self._cmdr_name_var, font=("TkDefaultFont", 10, "bold"), anchor="w").grid(row=0, column=1, sticky="ew", padx=(PAD, 0))
+        lbl = tk.Label(cmdr_frame, textvariable=self._cmdr_name_var, font=("TkDefaultFont", 10, "bold"), anchor="w")
+        lbl.grid(row=0, column=1, sticky="ew", padx=(PAD, 0))
+        self._accent_labels.append(lbl)
 
         row += 1
 
         # Controls
         ctrl_frame = tk.Frame(self)
         ctrl_frame.grid(row=row, column=0, sticky="ew", padx=PAD, pady=(PAD, 0))
+        self._plain_frames.append(ctrl_frame)
 
-        self._monitor_btn = tk.Button(ctrl_frame, text="Start Monitoring", command=self._toggle_monitoring, width=18)
+        self._monitor_btn = tk.Button(ctrl_frame, text="Start Monitoring", command=self._toggle_monitoring,
+                                      width=18, relief="flat", cursor="hand2")
         self._monitor_btn.pack(side="left")
+        self._buttons.append(self._monitor_btn)
+
+        self._theme_btn = tk.Button(ctrl_frame, text="Dark Mode", command=self._toggle_theme,
+                                    relief="flat", cursor="hand2")
+        self._theme_btn.pack(side="left", padx=(PAD, 0))
 
         self._status_var = tk.StringVar(value=STATUS_IDLE)
-        tk.Label(ctrl_frame, textvariable=self._status_var, anchor="w").pack(side="left", padx=(PAD, 0))
+        lbl = tk.Label(ctrl_frame, textvariable=self._status_var, anchor="w")
+        lbl.pack(side="left", padx=(PAD, 0))
+        self._accent_labels.append(lbl)
 
         row += 1
 
@@ -114,8 +217,12 @@ class App(tk.Tk):
         log_frame.grid(row=row, column=0, sticky="nsew", padx=PAD, pady=PAD)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
+        self._frames.append(log_frame)
 
-        self._log_text = scrolledtext.ScrolledText(log_frame, state="disabled", wrap="word", height=12)
+        self._log_text = scrolledtext.ScrolledText(
+            log_frame, state="disabled", wrap="word", height=12,
+            relief="flat", font=("Consolas", 9),
+        )
         self._log_text.grid(row=0, column=0, sticky="nsew")
 
     # ---- Settings -----------------------------------------------------------
