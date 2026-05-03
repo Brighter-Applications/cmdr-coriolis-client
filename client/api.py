@@ -56,6 +56,7 @@ def send_journal_entry(entry: dict, cmdr_name: str, api_key: str) -> dict:
         headers={
             'X-Api-Key': api_key,
             'Content-Type': 'application/json',
+            'User-Agent': 'CMDRCoriolisClient/1.0',
         },
         data=json.dumps(payload),
         timeout=REQUEST_TIMEOUT,
@@ -93,6 +94,7 @@ def send_journal_batch(entries: list, cmdr_name: str, api_key: str) -> dict:
         headers={
             'X-Api-Key': api_key,
             'Content-Type': 'application/json',
+            'User-Agent': 'CMDRCoriolisClient/1.0',
         },
         data=json.dumps(payload),
         timeout=REQUEST_TIMEOUT,
