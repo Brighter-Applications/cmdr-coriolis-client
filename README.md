@@ -27,7 +27,9 @@ Download the latest release for your platform from the [Releases page](https://g
 | Windows | `CMDRCoriolisClient-windows.exe` |
 | Linux | `CMDRCoriolisClient-linux` |
 
-**Windows:** Double-click the `.exe` file. Windows SmartScreen may warn you the first time — click "More info" → "Run anyway". No installation needed.
+**Windows:** Right-click the `.exe` file and select **Run as administrator**. Windows may show a SmartScreen warning the first time — click "More info" → "Run anyway". No installation needed.
+
+> **Why administrator?** On some Windows systems, antivirus software (e.g. Bitdefender) blocks outbound HTTPS connections from non-elevated processes. Running as administrator resolves this. This is not required on Linux.
 
 **Linux:** Make the file executable and run it:
 ```bash
