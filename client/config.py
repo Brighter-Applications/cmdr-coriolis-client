@@ -13,6 +13,8 @@ _APP_NAME = "cmdr-coriolis-client"
 # Keys used in the config file
 KEY_API_KEY = "api_key"
 KEY_JOURNAL_PATH = "journal_path"
+KEY_LAST_JOURNAL_FILE = "last_journal_file"
+KEY_LAST_FILE_POSITION = "last_file_position"
 
 
 def _config_dir() -> str:
@@ -76,3 +78,17 @@ def get_journal_path() -> str:
 def set_journal_path(path: str) -> None:
     """Store *path* as the journal directory in the config file."""
     save_config({KEY_JOURNAL_PATH: path})
+
+
+def get_last_position() -> tuple:
+    """Return (journal_filename, file_position) or ('', 0) if not set."""
+    cfg = load_config()
+    return cfg.get(KEY_LAST_JOURNAL_FILE, ''), cfg.get(KEY_LAST_FILE_POSITION, 0)
+
+
+def set_last_position(journal_file: str, position: int) -> None:
+    """Store the last successfully processed position."""
+    save_config({
+        KEY_LAST_JOURNAL_FILE: journal_file,
+        KEY_LAST_FILE_POSITION: position,
+    })

@@ -4,7 +4,7 @@ Provides helpers to:
   - locate the default journal directory on Windows and Linux
   - find the most recent journal file in a directory
   - extract the CMDR name from journal events
-  - tail a journal file and yield new JSON events as they appear
+  - tail a journal file with smart catchup and deduplication
   - detect when a new journal file is created (new game session)
 """
 
@@ -14,6 +14,7 @@ import os
 import sys
 import time
 
+from client import config
 from client.api import TRACKED_EVENTS
 
 
@@ -100,34 +101,40 @@ def extract_cmdr_name(journal_path: str) -> str:
                     continue
                 etype = event.get("event", "")
                 if etype == "Commander":
-                    name = event.get("Name", "")
-                    if name:
-                        return name
+                    return event.get("Name", "")
                 elif etype == "LoadGame":
-                    name = event.get("Commander", "")
-                    if name:
-                        return name
+                    return event.get("Commander", "")
     except OSError:
         pass
     return ""
 
 
 # ---------------------------------------------------------------------------
-# Journal tail / monitoring
+# Smart catchup — reduce redundant events on startup
 # ---------------------------------------------------------------------------
 
-def _find_last_tracked_event(journal_path: str) -> tuple:
-    """Scan the journal file and return (last_tracked_event_dict, file_position_after_it).
+# Events that make earlier events of certain types redundant:
+# If a "Materials" event exists, earlier MaterialCollected/MaterialTrade are unnecessary.
+# If a "Loadout" event exists, earlier EngineerCraft/ShipyardSwap are unnecessary.
+_SUPERSEDED_BY = {
+    'Materials': {'MaterialCollected', 'MaterialTrade'},
+    'Loadout': {'EngineerCraft', 'ShipyardSwap'},
+}
 
-    Returns (None, end_of_file_position) if no tracked events are found.
+
+def _collect_catchup_events(journal_path: str, start_pos: int = 0) -> tuple:
+    """Scan the journal from start_pos and return (events_to_send, end_position).
+
+    Applies superseding rules so only the minimal set of events is returned.
+    For example, if a Materials event exists after some MaterialCollected events,
+    only the Materials event is kept.
     """
-    last_event = None
-    last_event_end_pos = 0
+    tracked = []  # list of (event_dict, file_position_after)
 
     try:
         with open(journal_path, "r", encoding="utf-8") as fh:
+            fh.seek(start_pos)
             while True:
-                pos_before = fh.tell()
                 line = fh.readline()
                 if not line:
                     break
@@ -140,28 +147,55 @@ def _find_last_tracked_event(journal_path: str) -> tuple:
                 except json.JSONDecodeError:
                     continue
                 if event.get("event", "") in TRACKED_EVENTS:
-                    last_event = event
-                    last_event_end_pos = pos_after
-
-            # If no tracked event found, return end of file
-            if last_event is None:
-                last_event_end_pos = fh.tell()
-
+                    tracked.append((event, pos_after))
     except OSError:
-        pass
+        return [], start_pos
 
-    return last_event, last_event_end_pos
+    if not tracked:
+        # Return the end of file position even if no tracked events found
+        try:
+            with open(journal_path, "r", encoding="utf-8") as fh:
+                fh.seek(0, 2)
+                return [], fh.tell()
+        except OSError:
+            return [], start_pos
 
+    # Apply superseding rules: walk backwards and mark events to skip
+    skip_types = set()
+    keep = []
+
+    for event, pos in reversed(tracked):
+        etype = event.get("event", "")
+
+        # If this event type is superseded by something we've already kept, skip it
+        if etype in skip_types:
+            continue
+
+        keep.append((event, pos))
+
+        # Mark the types this event supersedes
+        if etype in _SUPERSEDED_BY:
+            skip_types.update(_SUPERSEDED_BY[etype])
+
+    keep.reverse()  # restore chronological order
+
+    return keep, tracked[-1][1]  # return the position after the last tracked event
+
+
+# ---------------------------------------------------------------------------
+# Journal tail / monitoring
+# ---------------------------------------------------------------------------
 
 class JournalTailer:
     """Incrementally read events from a journal file.
 
-    On start, scans the existing file to find the last tracked event,
-    yields just that one (to establish current state), then tails for
-    all new tracked events going forward.
+    On start, checks the saved position from the config file. If the same
+    journal file is being resumed, seeks to the saved position and does a
+    smart catchup (applying superseding rules). Otherwise reads the new
+    file with catchup from the beginning.
 
-    Also watches for new journal files (new game session) and switches
-    to them automatically.
+    Then tails for new events going forward, saving position after each
+    successfully yielded event.
     """
 
     def __init__(self, journal_path: str, poll_interval: float = 1.0) -> None:
@@ -171,31 +205,35 @@ class JournalTailer:
         self._running = False
 
     def stop(self) -> None:
-        """Signal the monitoring loop to stop."""
         self._running = False
 
     def read_new_events(self):
         """Generator that yields parsed journal event dicts.
 
-        First yields the last tracked event from the existing file (catchup),
-        then tails for new lines. Switches to newer journal files automatically.
+        On startup, yields the minimal set of catchup events (with superseding).
+        Then tails for new events, saving position after each yield.
+        Switches to newer journal files automatically.
         """
         self._running = True
-        is_first_file = True
 
         while self._running:
-            if is_first_file:
-                # For the initial file, find the last tracked event and
-                # start tailing from after it
-                last_event, tail_from_pos = _find_last_tracked_event(self.journal_path)
-                if last_event:
-                    yield last_event
-                is_first_file = False
+            # Determine where to start reading
+            saved_file, saved_pos = config.get_last_position()
+            if saved_file == self.journal_path and saved_pos > 0:
+                start_pos = saved_pos
             else:
-                # For subsequent files (new game session), start from the beginning
-                tail_from_pos = 0
+                start_pos = 0
 
-            # Now tail from the determined position
+            # Smart catchup: collect and deduplicate existing events
+            catchup_events, end_pos = _collect_catchup_events(self.journal_path, start_pos)
+
+            for event, pos in catchup_events:
+                if not self._running:
+                    return
+                yield event
+                config.set_last_position(self.journal_path, pos)
+
+            # Now tail from end_pos for new events
             try:
                 fh = open(self.journal_path, "r", encoding="utf-8")
             except OSError:
@@ -203,16 +241,20 @@ class JournalTailer:
                 continue
 
             with fh:
-                fh.seek(tail_from_pos)
+                fh.seek(end_pos)
 
                 while self._running:
                     line = fh.readline()
                     if line:
+                        pos_after = fh.tell()
                         line = line.strip()
                         if line:
                             try:
                                 event = json.loads(line)
-                                yield event
+                                # For live tailing, yield all tracked events (no superseding)
+                                if event.get("event", "") in TRACKED_EVENTS:
+                                    yield event
+                                    config.set_last_position(self.journal_path, pos_after)
                             except json.JSONDecodeError:
                                 continue
                     else:
