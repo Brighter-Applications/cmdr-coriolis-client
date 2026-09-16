@@ -13,11 +13,14 @@ JOURNAL_ENDPOINT = f"{API_BASE_URL}/api/journal/"
 
 REQUEST_TIMEOUT = 15
 
-# Events the Journal API actually processes — no point sending anything else
+# Events the Journal API actually processes — no point sending anything else.
+# 'Statistics' carries the operations currency (Merc Coin) balance and the
+# commander's credits under Bank_Account (MercCoins_Current / spendable credits),
+# which the server extracts server-side for the build shopping list.
 TRACKED_EVENTS = {
     'Commander', 'EngineerCraft', 'LoadGame', 'Loadout',
     'MaterialCollected', 'MaterialTrade', 'ShipyardSwap',
-    'StoredShips', 'StoredModules', 'Materials',
+    'StoredShips', 'StoredModules', 'Materials', 'Statistics',
 }
 
 
